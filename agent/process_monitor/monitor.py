@@ -10,6 +10,7 @@ import time
 import psutil
 
 from agent.detection.engine import analyze_process
+from agent.detection.risk import calculate_risk_score, get_risk_level
 from agent.event_collector.event import create_process_event
 from agent.process_monitor.process_tree import collect_process_tree
 
@@ -100,6 +101,15 @@ def monitor(interval=2):
                                 f"Description: "
                                 f"{detection['description']}"
                             )
+
+                        # Calculate the combined risk score
+                        # for all detections associated with
+                        # this process.
+                        risk_score = calculate_risk_score(detections)
+                        risk_level = get_risk_level(risk_score)
+
+                        print(f"Risk Score: {risk_score}")
+                        print(f"Risk Level: {risk_level.upper()}")
 
                 print()
 
