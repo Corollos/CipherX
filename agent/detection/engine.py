@@ -29,7 +29,56 @@ SUSPICIOUS_COMMAND_PATTERNS = {
         "/c powershell",
         "/c certutil",
     ],
+    "mshta": [
+        "javascript:",
+        "vbscript:",
+        "http://",
+        "https://",
+    ],
+    "rundll32": [
+        "javascript:",
+        "http://",
+        "https://",
+    ],
+    "regsvr32": [
+        "http://",
+        "https://",
+        "/s",
+    ],
+    "certutil": [
+        "-urlcache",
+        "-decode",
+        "-decodehex",
+        "http://",
+        "https://",
+    ],
+    "wscript": [
+        "http://",
+        "https://",
+        ".vbs",
+        ".vbe",
+    ],
+    "cscript": [
+        "http://",
+        "https://",
+        ".vbs",
+        ".vbe",
+    ],
 }
+
+
+def add_mitre_context(detection, rule):
+    """
+    Add MITRE ATT&CK context to a detection.
+    """
+
+    mitre = get_mitre_mapping(rule)
+
+    if mitre:
+        detection["mitre_technique_id"] = mitre["technique_id"]
+        detection["mitre_technique_name"] = mitre["technique_name"]
+
+    return detection
 
 
 def analyze_process(parent_name, child_name, command_line=None):
@@ -62,6 +111,7 @@ def analyze_process(parent_name, child_name, command_line=None):
     # ---------------------------------------------------------
 
     if (parent, child) in SUSPICIOUS_PARENT_CHILD:
+
         detection = {
             "rule": "suspicious_parent_child",
             "severity": "medium",
@@ -73,33 +123,58 @@ def analyze_process(parent_name, child_name, command_line=None):
             ),
         }
 
-        # Add MITRE ATT&CK context.
-        mitre = get_mitre_mapping(detection["rule"])
-
-        if mitre:
-            detection["mitre_technique_id"] = mitre["technique_id"]
-            detection["mitre_technique_name"] = mitre["technique_name"]
+        detection = add_mitre_context(
+            detection,
+            "suspicious_parent_child",
+        )
 
         detections.append(detection)
+
+    # ---------------------------------------------------------
+    # Determine command-line detection category
+    # ---------------------------------------------------------
+
+    command_category = None
+
+    if "powershell" in child:
+        command_category = "powershell"
+
+    elif "cmd" in child:
+        command_category = "cmd"
+
+    elif "mshta" in child:
+        command_category = "mshta"
+
+    elif "rundll32" in child:
+        command_category = "rundll32"
+
+    elif "regsvr32" in child:
+        command_category = "regsvr32"
+
+    elif "certutil" in child:
+        command_category = "certutil"
+
+    elif "wscript" in child:
+        command_category = "wscript"
+
+    elif "cscript" in child:
+        command_category = "cscript"
 
     # ---------------------------------------------------------
     # Command-line behavioral detection
     # ---------------------------------------------------------
 
-    patterns = []
+    if command_category:
 
-    if "powershell" in child:
-        patterns.extend(
-            SUSPICIOUS_COMMAND_PATTERNS["powershell"]
-        )
+        patterns = SUSPICIOUS_COMMAND_PATTERNS[
+            command_category
+        ]
 
-    if "cmd" in child:
-        patterns.extend(
-            SUSPICIOUS_COMMAND_PATTERNS["cmd"]
-        )
+        for pattern in patterns:
 
-    for pattern in patterns:
-        if pattern in command:
+            if pattern not in command:
+                continue
+
             detection = {
                 "rule": "suspicious_command_line",
                 "severity": "high",
@@ -112,14 +187,49 @@ def analyze_process(parent_name, child_name, command_line=None):
                 ),
             }
 
-            # Add MITRE ATT&CK context.
-            mitre = get_mitre_mapping(detection["rule"])
+            # -------------------------------------------------
+            # Select the most specific MITRE ATT&CK mapping.
+            # -------------------------------------------------
 
-            if mitre:
-                detection["mitre_technique_id"] = mitre["technique_id"]
-                detection["mitre_technique_name"] = (
-                    mitre["technique_name"]
-                )
+            mitre_rule = "suspicious_command_line"
+
+            if "powershell" in child:
+                mitre_rule = "powershell_execution"
+
+            elif "cmd" in child:
+                mitre_rule = "cmd_execution"
+
+            elif "wscript" in child or "cscript" in child:
+                mitre_rule = "visual_basic_execution"
+
+            elif "mshta" in child:
+                mitre_rule = "mshta_execution"
+
+            elif "rundll32" in child:
+                mitre_rule = "rundll32_execution"
+
+            elif "regsvr32" in child:
+                mitre_rule = "regsvr32_execution"
+
+            elif "certutil" in child:
+
+                if (
+                    "urlcache" in command
+                    or "http://" in command
+                    or "https://" in command
+                ):
+                    mitre_rule = "certutil_download"
+
+                elif (
+                    "-decode" in command
+                    or "-decodehex" in command
+                ):
+                    mitre_rule = "certutil_decode"
+
+            detection = add_mitre_context(
+                detection,
+                mitre_rule,
+            )
 
             detections.append(detection)
 
