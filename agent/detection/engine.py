@@ -5,6 +5,8 @@ Analyzes process behavior and identifies potentially
 suspicious execution patterns.
 """
 
+from agent.detection.mitre import get_mitre_mapping
+
 
 SUSPICIOUS_PARENT_CHILD = {
     ("powershell.exe", "cmd.exe"),
@@ -16,6 +18,7 @@ SUSPICIOUS_PARENT_CHILD = {
 
 SUSPICIOUS_COMMAND_PATTERNS = {
     "powershell": [
+        "-enc",
         "-encodedcommand",
         "invoke-expression",
         "iex ",
@@ -59,18 +62,25 @@ def analyze_process(parent_name, child_name, command_line=None):
     # ---------------------------------------------------------
 
     if (parent, child) in SUSPICIOUS_PARENT_CHILD:
-        detections.append(
-            {
-                "rule": "suspicious_parent_child",
-                "severity": "medium",
-                "parent_process": parent_name,
-                "child_process": child_name,
-                "description": (
-                    f"Potentially suspicious process relationship: "
-                    f"{parent_name} spawned {child_name}."
-                ),
-            }
-        )
+        detection = {
+            "rule": "suspicious_parent_child",
+            "severity": "medium",
+            "parent_process": parent_name,
+            "child_process": child_name,
+            "description": (
+                f"Potentially suspicious process relationship: "
+                f"{parent_name} spawned {child_name}."
+            ),
+        }
+
+        # Add MITRE ATT&CK context.
+        mitre = get_mitre_mapping(detection["rule"])
+
+        if mitre:
+            detection["mitre_technique_id"] = mitre["technique_id"]
+            detection["mitre_technique_name"] = mitre["technique_name"]
+
+        detections.append(detection)
 
     # ---------------------------------------------------------
     # Command-line behavioral detection
@@ -90,18 +100,27 @@ def analyze_process(parent_name, child_name, command_line=None):
 
     for pattern in patterns:
         if pattern in command:
-            detections.append(
-                {
-                    "rule": "suspicious_command_line",
-                    "severity": "high",
-                    "parent_process": parent_name,
-                    "child_process": child_name,
-                    "command_line": command_line,
-                    "description": (
-                        f"Potentially suspicious command-line "
-                        f"pattern detected: '{pattern}'."
-                    ),
-                }
-            )
+            detection = {
+                "rule": "suspicious_command_line",
+                "severity": "high",
+                "parent_process": parent_name,
+                "child_process": child_name,
+                "command_line": command_line,
+                "description": (
+                    f"Potentially suspicious command-line "
+                    f"pattern detected: '{pattern}'."
+                ),
+            }
+
+            # Add MITRE ATT&CK context.
+            mitre = get_mitre_mapping(detection["rule"])
+
+            if mitre:
+                detection["mitre_technique_id"] = mitre["technique_id"]
+                detection["mitre_technique_name"] = (
+                    mitre["technique_name"]
+                )
+
+            detections.append(detection)
 
     return detections

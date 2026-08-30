@@ -12,6 +12,7 @@ import psutil
 from agent.detection.engine import analyze_process
 from agent.detection.risk import calculate_risk_score, get_risk_level
 from agent.event_collector.event import create_process_event
+from agent.event_logger.logger import log_event
 from agent.process_monitor.process_tree import collect_process_tree
 
 
@@ -65,6 +66,9 @@ def monitor(interval=2):
 
                 event = create_process_event(event_data)
 
+                # Persist the process event for later investigation.
+                log_event(event)
+
                 # Build the current process tree so we can
                 # understand the new process's parent relationship.
                 process_tree = collect_process_tree()
@@ -113,6 +117,23 @@ def monitor(interval=2):
 
                         print(f"Risk Score: {risk_score}")
                         print(f"Risk Level: {risk_level.upper()}")
+
+                        # Persist the security detection so it
+                        # can be investigated after monitoring ends.
+                        detection_event = {
+                            "event_type": "security_detection",
+                            "pid": process.get("pid"),
+                            "parent_pid": process.get("ppid"),
+                            "process_name": process.get("name"),
+                            "parent_process": parent["name"],
+                            "username": process.get("username"),
+                            "command_line": process.get("cmdline"),
+                            "detections": detections,
+                            "risk_score": risk_score,
+                            "risk_level": risk_level,
+                        }
+
+                        log_event(detection_event)
 
                 print()
 
