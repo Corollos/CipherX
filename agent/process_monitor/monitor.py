@@ -82,10 +82,12 @@ def monitor(interval=2):
                     )
 
                     # Analyze the parent-child relationship
-                    # using the CIPHER-X detection engine.
+                    # and command-line behavior using the
+                    # CIPHER-X detection engine.
                     detections = analyze_process(
                         parent["name"],
                         process.get("name"),
+                        process.get("cmdline"),
                     )
 
                     if detections:

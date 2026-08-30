@@ -1,75 +1,107 @@
 """
 CIPHER-X Detection Engine
 
-Analyzes process relationships and identifies
-behavior that may warrant further investigation.
+Analyzes process behavior and identifies potentially
+suspicious execution patterns.
 """
 
 
-SUSPICIOUS_PARENT_CHILD_RULES = {
-    "powershell.exe": {
-        "cmd.exe",
-        "wscript.exe",
-        "cscript.exe",
-        "mshta.exe",
-    },
-    "cmd.exe": {
-        "powershell.exe",
-        "wscript.exe",
-        "cscript.exe",
-        "mshta.exe",
-    },
+SUSPICIOUS_PARENT_CHILD = {
+    ("powershell.exe", "cmd.exe"),
+    ("cmd.exe", "powershell.exe"),
+    ("wscript.exe", "powershell.exe"),
+    ("cscript.exe", "powershell.exe"),
 }
 
 
-def normalize_process_name(name):
-    """Normalize a process name for reliable comparisons."""
+SUSPICIOUS_COMMAND_PATTERNS = {
+    "powershell": [
+        "-encodedcommand",
+        "invoke-expression",
+        "iex ",
+        "downloadstring",
+        "downloadfile",
+    ],
+    "cmd": [
+        "/c powershell",
+        "/c certutil",
+    ],
+}
 
-    if not name:
-        return ""
 
-    return name.lower().strip()
-
-
-def detect_suspicious_parent_child(parent_name, child_name):
+def analyze_process(parent_name, child_name, command_line=None):
     """
-    Check whether a parent-child process relationship
-    matches one of our suspicious behavioral patterns.
+    Analyze a process relationship and command line
+    for potentially suspicious behavior.
 
-    Returns a detection result dictionary or None.
-    """
+    Args:
+        parent_name: Name of the parent process.
+        child_name: Name of the child process.
+        command_line: Process command line arguments.
 
-    parent = normalize_process_name(parent_name)
-    child = normalize_process_name(child_name)
-
-    suspicious_children = SUSPICIOUS_PARENT_CHILD_RULES.get(parent, set())
-
-    if child in suspicious_children:
-        return {
-            "rule": "suspicious_parent_child",
-            "severity": "medium",
-            "parent_process": parent,
-            "child_process": child,
-            "description": (
-                f"Potentially suspicious process relationship: "
-                f"{parent} spawned {child}."
-            ),
-        }
-
-    return None
-
-
-def analyze_process(parent_name, child_name):
-    """
-    Analyze a process relationship and return any detections.
+    Returns:
+        List of detection dictionaries.
     """
 
-    detection = detect_suspicious_parent_child(
-        parent_name,
-        child_name,
-    )
+    detections = []
 
-    if detection:
-        return [detection]
+    parent = (parent_name or "").lower()
+    child = (child_name or "").lower()
 
-    return []
+    # Normalize command-line arguments into one searchable string.
+    if isinstance(command_line, list):
+        command = " ".join(command_line).lower()
+    else:
+        command = str(command_line or "").lower()
+
+    # ---------------------------------------------------------
+    # Parent-child behavioral detection
+    # ---------------------------------------------------------
+
+    if (parent, child) in SUSPICIOUS_PARENT_CHILD:
+        detections.append(
+            {
+                "rule": "suspicious_parent_child",
+                "severity": "medium",
+                "parent_process": parent_name,
+                "child_process": child_name,
+                "description": (
+                    f"Potentially suspicious process relationship: "
+                    f"{parent_name} spawned {child_name}."
+                ),
+            }
+        )
+
+    # ---------------------------------------------------------
+    # Command-line behavioral detection
+    # ---------------------------------------------------------
+
+    patterns = []
+
+    if "powershell" in child:
+        patterns.extend(
+            SUSPICIOUS_COMMAND_PATTERNS["powershell"]
+        )
+
+    if "cmd" in child:
+        patterns.extend(
+            SUSPICIOUS_COMMAND_PATTERNS["cmd"]
+        )
+
+    for pattern in patterns:
+        if pattern in command:
+            detections.append(
+                {
+                    "rule": "suspicious_command_line",
+                    "severity": "high",
+                    "parent_process": parent_name,
+                    "child_process": child_name,
+                    "command_line": command_line,
+                    "description": (
+                        f"Potentially suspicious command-line "
+                        f"pattern detected: '{pattern}'."
+                    ),
+                }
+            )
+
+    return detections
