@@ -9,6 +9,7 @@ import time
 
 import psutil
 
+from agent.detection.engine import analyze_process
 from agent.event_collector.event import create_process_event
 from agent.process_monitor.process_tree import collect_process_tree
 
@@ -77,6 +78,28 @@ def monitor(interval=2):
                         f"Parent Process: {parent['name']} "
                         f"(PID: {parent['pid']})"
                     )
+
+                    # Analyze the parent-child relationship
+                    # using the CIPHER-X detection engine.
+                    detections = analyze_process(
+                        parent["name"],
+                        process.get("name"),
+                    )
+
+                    if detections:
+                        print("\n🚨 CIPHER-X DETECTION")
+
+                        for detection in detections:
+                            print(
+                                f"Rule: {detection['rule']}"
+                            )
+                            print(
+                                f"Severity: {detection['severity']}"
+                            )
+                            print(
+                                f"Description: "
+                                f"{detection['description']}"
+                            )
 
                 print()
 
