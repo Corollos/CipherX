@@ -10,6 +10,7 @@ import time
 import psutil
 
 from agent.event_collector.event import create_process_event
+from agent.process_monitor.process_tree import collect_process_tree
 
 
 def get_running_processes():
@@ -51,18 +52,32 @@ def monitor(interval=2):
             for pid in new_pids:
                 process = current_processes[pid]
 
-                event = create_process_event(
-                    {
-                        "pid": process.get("pid"),
-                        "parent_pid": process.get("ppid"),
-                        "name": process.get("name"),
-                        "executable": process.get("exe"),
-                        "username": process.get("username"),
-                    }
-                )
+                event_data = {
+                    "pid": process.get("pid"),
+                    "parent_pid": process.get("ppid"),
+                    "name": process.get("name"),
+                    "executable": process.get("exe"),
+                    "username": process.get("username"),
+                }
+
+                event = create_process_event(event_data)
+
+                # Build the current process tree so we can
+                # understand the new process's parent relationship.
+                process_tree = collect_process_tree()
+
+                parent_pid = process.get("ppid")
+                parent = process_tree.get(parent_pid)
 
                 print("NEW PROCESS DETECTED")
                 print(event.to_json())
+
+                if parent:
+                    print(
+                        f"Parent Process: {parent['name']} "
+                        f"(PID: {parent['pid']})"
+                    )
+
                 print()
 
             known_processes = current_processes
