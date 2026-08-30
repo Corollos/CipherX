@@ -21,7 +21,7 @@ def get_running_processes():
     processes = {}
 
     for process in psutil.process_iter(
-        ["pid", "ppid", "name", "exe", "username"]
+        ["pid", "ppid", "name", "exe", "username", "cmdline"]
     ):
         try:
             processes[process.info["pid"]] = process.info
@@ -60,6 +60,7 @@ def monitor(interval=2):
                     "name": process.get("name"),
                     "executable": process.get("exe"),
                     "username": process.get("username"),
+                    "command_line": process.get("cmdline"),
                 }
 
                 event = create_process_event(event_data)

@@ -1,31 +1,50 @@
 """
-CIPHER-X Security Event Model
+CIPHER-X Security Event
 
-Defines the standardized format used by CIPHER-X
-to represent endpoint security telemetry.
+Defines the standardized event structure used by CIPHER-X
+to represent endpoint process activity.
 """
 
-from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 import json
 
 
-@dataclass
 class ProcessEvent:
-    """Represents a process-related security event."""
+    """Represents a standardized process security event."""
 
-    event_type: str
-    timestamp: str
-    pid: int
-    parent_pid: int | None
-    process_name: str | None
-    executable: str | None
-    username: str | None
+    def __init__(
+        self,
+        event_type,
+        timestamp,
+        pid,
+        parent_pid,
+        process_name,
+        executable,
+        username,
+        command_line=None,
+    ):
+        self.event_type = event_type
+        self.timestamp = timestamp
+        self.pid = pid
+        self.parent_pid = parent_pid
+        self.process_name = process_name
+        self.executable = executable
+        self.username = username
+        self.command_line = command_line
 
     def to_dict(self):
         """Convert the event into a dictionary."""
 
-        return asdict(self)
+        return {
+            "event_type": self.event_type,
+            "timestamp": self.timestamp,
+            "pid": self.pid,
+            "parent_pid": self.parent_pid,
+            "process_name": self.process_name,
+            "executable": self.executable,
+            "username": self.username,
+            "command_line": self.command_line,
+        }
 
     def to_json(self):
         """Convert the event into JSON."""
@@ -34,14 +53,15 @@ class ProcessEvent:
 
 
 def create_process_event(process):
-    """Create a standardized CIPHER-X event from process telemetry."""
+    """Create a standardized process event from process information."""
 
     return ProcessEvent(
         event_type="process_observed",
         timestamp=datetime.now(timezone.utc).isoformat(),
-        pid=process["pid"],
-        parent_pid=process["parent_pid"],
-        process_name=process["name"],
-        executable=process["executable"],
-        username=process["username"],
+        pid=process.get("pid"),
+        parent_pid=process.get("parent_pid"),
+        process_name=process.get("name"),
+        executable=process.get("executable"),
+        username=process.get("username"),
+        command_line=process.get("command_line"),
     )
