@@ -5,10 +5,12 @@ Continuously monitors the Windows endpoint for newly
 observed processes and generates standardized security events.
 """
 
+from datetime import datetime, timezone
 import time
 
 import psutil
 
+from agent.detection.correlation import CorrelationEngine
 from agent.detection.engine import analyze_process
 from agent.detection.risk import calculate_risk_score, get_risk_level
 from agent.event_collector.event import create_process_event
@@ -40,6 +42,11 @@ def monitor(interval=2):
     Args:
         interval: Number of seconds between process snapshots.
     """
+
+    # Create one correlation engine for the entire
+    # monitoring session so CIPHER-X remembers
+    # recent security detections.
+    correlation_engine = CorrelationEngine()
 
     known_processes = get_running_processes()
 
@@ -85,9 +92,8 @@ def monitor(interval=2):
                         f"(PID: {parent['pid']})"
                     )
 
-                    # Analyze the parent-child relationship
-                    # and command-line behavior using the
-                    # CIPHER-X detection engine.
+                    # Analyze the process relationship and
+                    # command-line behavior.
                     detections = analyze_process(
                         parent["name"],
                         process.get("name"),
@@ -98,30 +104,29 @@ def monitor(interval=2):
                         print("\n🚨 CIPHER-X DETECTION")
 
                         for detection in detections:
+                            print(f"Rule: {detection['rule']}")
                             print(
-                                f"Rule: {detection['rule']}"
-                            )
-                            print(
-                                f"Severity: {detection['severity']}"
+                                f"Severity: "
+                                f"{detection['severity']}"
                             )
                             print(
                                 f"Description: "
                                 f"{detection['description']}"
                             )
 
-                        # Calculate the combined risk score
-                        # for all detections associated with
-                        # this process.
+                        # Calculate the combined risk score.
                         risk_score = calculate_risk_score(detections)
                         risk_level = get_risk_level(risk_score)
 
                         print(f"Risk Score: {risk_score}")
                         print(f"Risk Level: {risk_level.upper()}")
 
-                        # Persist the security detection so it
-                        # can be investigated after monitoring ends.
+                        # Persist the security detection.
                         detection_event = {
                             "event_type": "security_detection",
+                            "timestamp": datetime.now(
+                                timezone.utc
+                            ).isoformat(),
                             "pid": process.get("pid"),
                             "parent_pid": process.get("ppid"),
                             "process_name": process.get("name"),
@@ -134,6 +139,56 @@ def monitor(interval=2):
                         }
 
                         log_event(detection_event)
+
+                        # Add individual detections to the
+                        # correlation engine with additional
+                        # process context.
+                        for detection in detections:
+                            correlation_event = {
+                                **detection,
+                                "timestamp": datetime.now(
+                                    timezone.utc
+                                ).isoformat(),
+                                "pid": process.get("pid"),
+                                "parent_pid": process.get("ppid"),
+                                "process_name": process.get("name"),
+                                "username": process.get("username"),
+                            }
+
+                            correlation_engine.add_event(
+                                correlation_event
+                            )
+
+                        # Analyze recent detections for repeated
+                        # or correlated suspicious behavior.
+                        correlation_alerts = (
+                            correlation_engine.analyze_recent_events()
+                        )
+
+                        for alert in correlation_alerts:
+                            alert["timestamp"] = datetime.now(
+                                timezone.utc
+                            ).isoformat()
+
+                            print(
+                                "\n⚠️ CIPHER-X CORRELATION ALERT"
+                            )
+                            print(f"Rule: {alert['rule']}")
+                            print(
+                                f"Severity: "
+                                f"{alert['severity']}"
+                            )
+                            print(
+                                f"Description: "
+                                f"{alert['description']}"
+                            )
+                            print(
+                                f"Event Count: "
+                                f"{alert['event_count']}"
+                            )
+
+                            # Persist the correlation alert.
+                            log_event(alert)
 
                 print()
 
