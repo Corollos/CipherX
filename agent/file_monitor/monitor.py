@@ -2,12 +2,15 @@
 CIPHER-X Continuous File Integrity Monitor
 
 Continuously monitors a directory for file creation,
-modification, and deletion using SHA-256 hashes.
+modification, and deletion using SHA-256 hashes and
+analyzes file activity for suspicious behavior.
 """
 
 import time
 
+from agent.detection.risk import calculate_risk_score, get_risk_level
 from agent.event_logger.logger import log_event
+from agent.file_monitor.detection import analyze_file_change
 from agent.file_monitor.integrity import (
     create_baseline,
     detect_changes,
@@ -31,15 +34,13 @@ def monitor_directory(directory_path, interval=5):
 
     try:
         while True:
-
             changes = detect_changes(
                 directory_path,
                 baseline,
             )
 
             for change in changes:
-
-                print("🚨 FILE INTEGRITY EVENT")
+                print("FILE INTEGRITY EVENT")
                 print(
                     f"Change Type: "
                     f"{change['change_type']}"
@@ -54,7 +55,6 @@ def monitor_directory(directory_path, interval=5):
                         f"Previous Hash: "
                         f"{change['previous_hash']}"
                     )
-
                     print(
                         f"Current Hash: "
                         f"{change['current_hash']}"
@@ -72,19 +72,58 @@ def monitor_directory(directory_path, interval=5):
                         f"{change['previous_hash']}"
                     )
 
-                # Add a standardized event type so file
-                # activity can be identified in the central
-                # CIPHER-X event log.
-                change["event_type"] = "file_integrity_event"
+                file_event = {
+                    "event_type": "file_integrity_event",
+                    **change,
+                }
 
-                # Persist the file integrity event alongside
-                # process and security detection events.
-                log_event(change)
+                log_event(file_event)
+
+                detections = analyze_file_change(change)
+
+                if detections:
+                    print("\nCIPHER-X FILE DETECTION")
+
+                    for detection in detections:
+                        print(
+                            f"Rule: {detection['rule']}"
+                        )
+                        print(
+                            f"Severity: "
+                            f"{detection['severity']}"
+                        )
+                        print(
+                            f"Description: "
+                            f"{detection['description']}"
+                        )
+
+                    risk_score = calculate_risk_score(
+                        detections
+                    )
+
+                    risk_level = get_risk_level(
+                        risk_score
+                    )
+
+                    print(f"Risk Score: {risk_score}")
+                    print(
+                        f"Risk Level: "
+                        f"{risk_level.upper()}"
+                    )
+
+                    detection_event = {
+                        "event_type": "file_security_detection",
+                        "file_path": change["file_path"],
+                        "change_type": change["change_type"],
+                        "detections": detections,
+                        "risk_score": risk_score,
+                        "risk_level": risk_level,
+                    }
+
+                    log_event(detection_event)
 
                 print()
 
-            # Update the baseline after processing changes
-            # so the same event is not reported repeatedly.
             baseline = create_baseline(directory_path)
 
             time.sleep(interval)
