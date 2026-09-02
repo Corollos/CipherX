@@ -7,7 +7,6 @@ suspicious execution patterns.
 
 from agent.detection.mitre import get_mitre_mapping
 
-
 SUSPICIOUS_PARENT_CHILD = {
     ("powershell.exe", "cmd.exe"),
     ("cmd.exe", "powershell.exe"),
@@ -15,11 +14,10 @@ SUSPICIOUS_PARENT_CHILD = {
     ("cscript.exe", "powershell.exe"),
 }
 
-
 SUSPICIOUS_COMMAND_PATTERNS = {
     "powershell": [
-        "-enc",
         "-encodedcommand",
+        "-enc",
         "invoke-expression",
         "iex ",
         "downloadstring",
@@ -75,10 +73,130 @@ def add_mitre_context(detection, rule):
     mitre = get_mitre_mapping(rule)
 
     if mitre:
-        detection["mitre_technique_id"] = mitre["technique_id"]
-        detection["mitre_technique_name"] = mitre["technique_name"]
+        detection["mitre_technique_id"] = (
+            mitre["technique_id"]
+        )
+        detection["mitre_technique_name"] = (
+            mitre["technique_name"]
+        )
 
     return detection
+
+
+def get_command_category(child_name):
+    """
+    Determine which command-line detection category
+    applies to the child process.
+    """
+
+    child = (child_name or "").lower()
+
+    if "powershell" in child:
+        return "powershell"
+
+    if "cmd" in child:
+        return "cmd"
+
+    if "mshta" in child:
+        return "mshta"
+
+    if "rundll32" in child:
+        return "rundll32"
+
+    if "regsvr32" in child:
+        return "regsvr32"
+
+    if "certutil" in child:
+        return "certutil"
+
+    if "wscript" in child:
+        return "wscript"
+
+    if "cscript" in child:
+        return "cscript"
+
+    return None
+
+
+def get_mitre_rule(child_name, command):
+    """
+    Select the most specific MITRE ATT&CK mapping
+    for the detected process behavior.
+    """
+
+    child = (child_name or "").lower()
+
+    if "powershell" in child:
+        return "powershell_execution"
+
+    if "cmd" in child:
+        return "cmd_execution"
+
+    if "wscript" in child or "cscript" in child:
+        return "visual_basic_execution"
+
+    if "mshta" in child:
+        return "mshta_execution"
+
+    if "rundll32" in child:
+        return "rundll32_execution"
+
+    if "regsvr32" in child:
+        return "regsvr32_execution"
+
+    if "certutil" in child:
+
+        if (
+            "urlcache" in command
+            or "http://" in command
+            or "https://" in command
+        ):
+            return "certutil_download"
+
+        if (
+            "-decode" in command
+            or "-decodehex" in command
+        ):
+            return "certutil_decode"
+
+    return "suspicious_command_line"
+
+
+def find_command_matches(patterns, command):
+    """
+    Find suspicious command-line patterns while
+    removing overlapping or duplicate matches.
+
+    More specific patterns are preferred over
+    shorter patterns contained within them.
+    """
+
+    matches = []
+
+    # Check longer patterns first so, for example,
+    # '-encodedcommand' takes priority over '-enc'.
+    sorted_patterns = sorted(
+        patterns,
+        key=len,
+        reverse=True,
+    )
+
+    for pattern in sorted_patterns:
+
+        if pattern not in command:
+            continue
+
+        # Skip a pattern if it is already represented
+        # by a more specific match.
+        if any(
+            pattern in existing_pattern
+            for existing_pattern in matches
+        ):
+            continue
+
+        matches.append(pattern)
+
+    return matches
 
 
 def analyze_process(parent_name, child_name, command_line=None):
@@ -100,15 +218,14 @@ def analyze_process(parent_name, child_name, command_line=None):
     parent = (parent_name or "").lower()
     child = (child_name or "").lower()
 
-    # Normalize command-line arguments into one searchable string.
     if isinstance(command_line, list):
         command = " ".join(command_line).lower()
     else:
         command = str(command_line or "").lower()
 
-    # ---------------------------------------------------------
+    # -------------------------------------------------
     # Parent-child behavioral detection
-    # ---------------------------------------------------------
+    # -------------------------------------------------
 
     if (parent, child) in SUSPICIOUS_PARENT_CHILD:
 
@@ -130,39 +247,13 @@ def analyze_process(parent_name, child_name, command_line=None):
 
         detections.append(detection)
 
-    # ---------------------------------------------------------
-    # Determine command-line detection category
-    # ---------------------------------------------------------
-
-    command_category = None
-
-    if "powershell" in child:
-        command_category = "powershell"
-
-    elif "cmd" in child:
-        command_category = "cmd"
-
-    elif "mshta" in child:
-        command_category = "mshta"
-
-    elif "rundll32" in child:
-        command_category = "rundll32"
-
-    elif "regsvr32" in child:
-        command_category = "regsvr32"
-
-    elif "certutil" in child:
-        command_category = "certutil"
-
-    elif "wscript" in child:
-        command_category = "wscript"
-
-    elif "cscript" in child:
-        command_category = "cscript"
-
-    # ---------------------------------------------------------
+    # -------------------------------------------------
     # Command-line behavioral detection
-    # ---------------------------------------------------------
+    # -------------------------------------------------
+
+    command_category = get_command_category(
+        child_name
+    )
 
     if command_category:
 
@@ -170,10 +261,17 @@ def analyze_process(parent_name, child_name, command_line=None):
             command_category
         ]
 
-        for pattern in patterns:
+        matches = find_command_matches(
+            patterns,
+            command,
+        )
 
-            if pattern not in command:
-                continue
+        mitre_rule = get_mitre_rule(
+            child_name,
+            command,
+        )
+
+        for pattern in matches:
 
             detection = {
                 "rule": "suspicious_command_line",
@@ -186,45 +284,6 @@ def analyze_process(parent_name, child_name, command_line=None):
                     f"pattern detected: '{pattern}'."
                 ),
             }
-
-            # -------------------------------------------------
-            # Select the most specific MITRE ATT&CK mapping.
-            # -------------------------------------------------
-
-            mitre_rule = "suspicious_command_line"
-
-            if "powershell" in child:
-                mitre_rule = "powershell_execution"
-
-            elif "cmd" in child:
-                mitre_rule = "cmd_execution"
-
-            elif "wscript" in child or "cscript" in child:
-                mitre_rule = "visual_basic_execution"
-
-            elif "mshta" in child:
-                mitre_rule = "mshta_execution"
-
-            elif "rundll32" in child:
-                mitre_rule = "rundll32_execution"
-
-            elif "regsvr32" in child:
-                mitre_rule = "regsvr32_execution"
-
-            elif "certutil" in child:
-
-                if (
-                    "urlcache" in command
-                    or "http://" in command
-                    or "https://" in command
-                ):
-                    mitre_rule = "certutil_download"
-
-                elif (
-                    "-decode" in command
-                    or "-decodehex" in command
-                ):
-                    mitre_rule = "certutil_decode"
 
             detection = add_mitre_context(
                 detection,

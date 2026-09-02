@@ -1,8 +1,5 @@
 """
 CIPHER-X Continuous Process Monitor
-
-Continuously monitors the Windows endpoint for newly
-observed processes and generates standardized security events.
 """
 
 from datetime import datetime, timezone
@@ -10,7 +7,7 @@ import time
 
 import psutil
 
-from agent.detection.correlation import CorrelationEngine
+from agent.detection.correlation_manager import correlation_engine
 from agent.detection.engine import analyze_process
 from agent.detection.risk import calculate_risk_score, get_risk_level
 from agent.event_collector.event import create_process_event
@@ -19,7 +16,7 @@ from agent.process_monitor.process_tree import collect_process_tree
 
 
 def get_running_processes():
-    """Return a snapshot of currently running process IDs."""
+    """Return a snapshot of currently running processes."""
 
     processes = {}
 
@@ -36,17 +33,7 @@ def get_running_processes():
 
 
 def monitor(interval=2):
-    """
-    Continuously monitor for newly observed processes.
-
-    Args:
-        interval: Number of seconds between process snapshots.
-    """
-
-    # Create one correlation engine for the entire
-    # monitoring session so CIPHER-X remembers
-    # recent security detections.
-    correlation_engine = CorrelationEngine()
+    """Continuously monitor for newly observed processes."""
 
     known_processes = get_running_processes()
 
@@ -57,7 +44,10 @@ def monitor(interval=2):
         while True:
             current_processes = get_running_processes()
 
-            new_pids = set(current_processes) - set(known_processes)
+            new_pids = (
+                set(current_processes)
+                - set(known_processes)
+            )
 
             for pid in new_pids:
                 process = current_processes[pid]
@@ -72,12 +62,8 @@ def monitor(interval=2):
                 }
 
                 event = create_process_event(event_data)
-
-                # Persist the process event for later investigation.
                 log_event(event)
 
-                # Build the current process tree so we can
-                # understand the new process's parent relationship.
                 process_tree = collect_process_tree()
 
                 parent_pid = process.get("ppid")
@@ -92,8 +78,6 @@ def monitor(interval=2):
                         f"(PID: {parent['pid']})"
                     )
 
-                    # Analyze the process relationship and
-                    # command-line behavior.
                     detections = analyze_process(
                         parent["name"],
                         process.get("name"),
@@ -101,10 +85,13 @@ def monitor(interval=2):
                     )
 
                     if detections:
-                        print("\n🚨 CIPHER-X DETECTION")
+                        print("\nCIPHER-X DETECTION")
 
                         for detection in detections:
-                            print(f"Rule: {detection['rule']}")
+                            print(
+                                f"Rule: "
+                                f"{detection['rule']}"
+                            )
                             print(
                                 f"Severity: "
                                 f"{detection['severity']}"
@@ -114,14 +101,21 @@ def monitor(interval=2):
                                 f"{detection['description']}"
                             )
 
-                        # Calculate the combined risk score.
-                        risk_score = calculate_risk_score(detections)
-                        risk_level = get_risk_level(risk_score)
+                        risk_score = calculate_risk_score(
+                            detections
+                        )
+                        risk_level = get_risk_level(
+                            risk_score
+                        )
 
-                        print(f"Risk Score: {risk_score}")
-                        print(f"Risk Level: {risk_level.upper()}")
+                        print(
+                            f"Risk Score: {risk_score}"
+                        )
+                        print(
+                            f"Risk Level: "
+                            f"{risk_level.upper()}"
+                        )
 
-                        # Persist the security detection.
                         detection_event = {
                             "event_type": "security_detection",
                             "timestamp": datetime.now(
@@ -140,9 +134,6 @@ def monitor(interval=2):
 
                         log_event(detection_event)
 
-                        # Add individual detections to the
-                        # correlation engine with additional
-                        # process context.
                         for detection in detections:
                             correlation_event = {
                                 **detection,
@@ -151,18 +142,21 @@ def monitor(interval=2):
                                 ).isoformat(),
                                 "pid": process.get("pid"),
                                 "parent_pid": process.get("ppid"),
-                                "process_name": process.get("name"),
-                                "username": process.get("username"),
+                                "process_name": process.get(
+                                    "name"
+                                ),
+                                "username": process.get(
+                                    "username"
+                                ),
                             }
 
                             correlation_engine.add_event(
                                 correlation_event
                             )
 
-                        # Analyze recent detections for repeated
-                        # or correlated suspicious behavior.
                         correlation_alerts = (
-                            correlation_engine.analyze_recent_events()
+                            correlation_engine
+                            .analyze_recent_events()
                         )
 
                         for alert in correlation_alerts:
@@ -171,23 +165,45 @@ def monitor(interval=2):
                             ).isoformat()
 
                             print(
-                                "\n⚠️ CIPHER-X CORRELATION ALERT"
+                                "\nCIPHER-X CORRELATION ALERT"
                             )
-                            print(f"Rule: {alert['rule']}")
+                            print(
+                                f"Correlation Type: "
+                                f"{alert.get('correlation_type')}"
+                            )
                             print(
                                 f"Severity: "
-                                f"{alert['severity']}"
+                                f"{alert.get('severity')}"
                             )
                             print(
                                 f"Description: "
-                                f"{alert['description']}"
-                            )
-                            print(
-                                f"Event Count: "
-                                f"{alert['event_count']}"
+                                f"{alert.get('description')}"
                             )
 
-                            # Persist the correlation alert.
+                            if alert.get("rule"):
+                                print(
+                                    f"Rule: "
+                                    f"{alert['rule']}"
+                                )
+
+                            if alert.get("related_rules"):
+                                related_rules = ", ".join(
+                                    alert["related_rules"]
+                                )
+
+                                print(
+                                    f"Related Rules: "
+                                    f"{related_rules}"
+                                )
+
+                            if alert.get(
+                                "event_count"
+                            ) is not None:
+                                print(
+                                    f"Event Count: "
+                                    f"{alert['event_count']}"
+                                )
+
                             log_event(alert)
 
                 print()
