@@ -1,12 +1,9 @@
-"""
-CIPHER-X Continuous Process Monitor
-"""
-
 from datetime import datetime, timezone
 import time
 
 import psutil
 
+from agent.alerting.alert_manager import AlertManager
 from agent.detection.correlation_manager import correlation_engine
 from agent.detection.engine import analyze_process
 from agent.detection.risk import calculate_risk_score, get_risk_level
@@ -16,8 +13,6 @@ from agent.process_monitor.process_tree import collect_process_tree
 
 
 def get_running_processes():
-    """Return a snapshot of currently running processes."""
-
     processes = {}
 
     for process in psutil.process_iter(
@@ -26,15 +21,18 @@ def get_running_processes():
         try:
             processes[process.info["pid"]] = process.info
 
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
+        except (
+            psutil.NoSuchProcess,
+            psutil.AccessDenied,
+            psutil.ZombieProcess,
+        ):
             continue
 
     return processes
 
 
 def monitor(interval=2):
-    """Continuously monitor for newly observed processes."""
-
+    alert_manager = AlertManager()
     known_processes = get_running_processes()
 
     print("CIPHER-X continuous process monitor started.")
@@ -72,139 +70,198 @@ def monitor(interval=2):
                 print("NEW PROCESS DETECTED")
                 print(event.to_json())
 
-                if parent:
+                if not parent:
+                    print()
+                    continue
+
+                print(
+                    f"Parent Process: {parent['name']} "
+                    f"(PID: {parent['pid']})"
+                )
+
+                detections = analyze_process(
+                    parent["name"],
+                    process.get("name"),
+                    process.get("cmdline"),
+                )
+
+                if not detections:
+                    print()
+                    continue
+
+                print("\nCIPHER-X DETECTION")
+
+                for detection in detections:
                     print(
-                        f"Parent Process: {parent['name']} "
-                        f"(PID: {parent['pid']})"
+                        f"Rule: {detection['rule']}"
+                    )
+                    print(
+                        f"Severity: "
+                        f"{detection['severity']}"
+                    )
+                    print(
+                        f"Description: "
+                        f"{detection['description']}"
                     )
 
-                    detections = analyze_process(
-                        parent["name"],
-                        process.get("name"),
-                        process.get("cmdline"),
+                risk_score = calculate_risk_score(
+                    detections
+                )
+                risk_level = get_risk_level(
+                    risk_score
+                )
+
+                print(
+                    f"Risk Score: {risk_score}"
+                )
+                print(
+                    f"Risk Level: "
+                    f"{risk_level.upper()}"
+                )
+
+                detection_event = {
+                    "event_type": "security_detection",
+                    "timestamp": datetime.now(
+                        timezone.utc
+                    ).isoformat(),
+                    "pid": process.get("pid"),
+                    "parent_pid": process.get("ppid"),
+                    "process_name": process.get("name"),
+                    "parent_process": parent["name"],
+                    "username": process.get("username"),
+                    "command_line": process.get("cmdline"),
+                    "detections": detections,
+                    "risk_score": risk_score,
+                    "risk_level": risk_level,
+                }
+
+                log_event(detection_event)
+
+                should_create_alert = (
+                    risk_level in {
+                        "medium",
+                        "high",
+                        "critical",
+                    }
+                )
+
+                if should_create_alert:
+                    alert = alert_manager.create_alert(
+                        title=(
+                            "Suspicious Process Activity"
+                        ),
+                        severity=risk_level,
+                        description=(
+                            "CIPHER-X detected suspicious "
+                            "process behavior requiring "
+                            "investigation."
+                        ),
+                        risk_score=risk_score,
+                        detections=detections,
+                        related_events=[
+                            detection_event
+                        ],
                     )
 
-                    if detections:
-                        print("\nCIPHER-X DETECTION")
+                    log_event(alert)
 
-                        for detection in detections:
-                            print(
-                                f"Rule: "
-                                f"{detection['rule']}"
-                            )
-                            print(
-                                f"Severity: "
-                                f"{detection['severity']}"
-                            )
-                            print(
-                                f"Description: "
-                                f"{detection['description']}"
-                            )
+                    print(
+                        "\nCIPHER-X SECURITY ALERT"
+                    )
+                    print(
+                        f"Alert ID: "
+                        f"{alert['alert_id']}"
+                    )
+                    print(
+                        f"Severity: "
+                        f"{alert['severity'].upper()}"
+                    )
+                    print(
+                        f"Status: "
+                        f"{alert['status'].upper()}"
+                    )
+                    print(
+                        f"Title: "
+                        f"{alert['title']}"
+                    )
 
-                        risk_score = calculate_risk_score(
-                            detections
+                for detection in detections:
+                    correlation_event = {
+                        **detection,
+                        "timestamp": datetime.now(
+                            timezone.utc
+                        ).isoformat(),
+                        "pid": process.get("pid"),
+                        "parent_pid": process.get("ppid"),
+                        "process_name": process.get(
+                            "name"
+                        ),
+                        "username": process.get(
+                            "username"
+                        ),
+                    }
+
+                    correlation_engine.add_event(
+                        correlation_event
+                    )
+
+                correlation_alerts = (
+                    correlation_engine
+                    .analyze_recent_events()
+                )
+
+                for correlation_alert in correlation_alerts:
+                    correlation_alert[
+                        "timestamp"
+                    ] = datetime.now(
+                        timezone.utc
+                    ).isoformat()
+
+                    print(
+                        "\nCIPHER-X CORRELATION ALERT"
+                    )
+                    print(
+                        f"Correlation Type: "
+                        f"{correlation_alert.get('correlation_type')}"
+                    )
+                    print(
+                        f"Severity: "
+                        f"{correlation_alert.get('severity')}"
+                    )
+                    print(
+                        f"Description: "
+                        f"{correlation_alert.get('description')}"
+                    )
+
+                    if correlation_alert.get("rule"):
+                        print(
+                            f"Rule: "
+                            f"{correlation_alert['rule']}"
                         )
-                        risk_level = get_risk_level(
-                            risk_score
+
+                    if correlation_alert.get(
+                        "related_rules"
+                    ):
+                        related_rules = ", ".join(
+                            correlation_alert[
+                                "related_rules"
+                            ]
                         )
 
                         print(
-                            f"Risk Score: {risk_score}"
+                            f"Related Rules: "
+                            f"{related_rules}"
                         )
+
+                    if correlation_alert.get(
+                        "event_count"
+                    ) is not None:
                         print(
-                            f"Risk Level: "
-                            f"{risk_level.upper()}"
+                            f"Event Count: "
+                            f"{correlation_alert['event_count']}"
                         )
 
-                        detection_event = {
-                            "event_type": "security_detection",
-                            "timestamp": datetime.now(
-                                timezone.utc
-                            ).isoformat(),
-                            "pid": process.get("pid"),
-                            "parent_pid": process.get("ppid"),
-                            "process_name": process.get("name"),
-                            "parent_process": parent["name"],
-                            "username": process.get("username"),
-                            "command_line": process.get("cmdline"),
-                            "detections": detections,
-                            "risk_score": risk_score,
-                            "risk_level": risk_level,
-                        }
-
-                        log_event(detection_event)
-
-                        for detection in detections:
-                            correlation_event = {
-                                **detection,
-                                "timestamp": datetime.now(
-                                    timezone.utc
-                                ).isoformat(),
-                                "pid": process.get("pid"),
-                                "parent_pid": process.get("ppid"),
-                                "process_name": process.get(
-                                    "name"
-                                ),
-                                "username": process.get(
-                                    "username"
-                                ),
-                            }
-
-                            correlation_engine.add_event(
-                                correlation_event
-                            )
-
-                        correlation_alerts = (
-                            correlation_engine
-                            .analyze_recent_events()
-                        )
-
-                        for alert in correlation_alerts:
-                            alert["timestamp"] = datetime.now(
-                                timezone.utc
-                            ).isoformat()
-
-                            print(
-                                "\nCIPHER-X CORRELATION ALERT"
-                            )
-                            print(
-                                f"Correlation Type: "
-                                f"{alert.get('correlation_type')}"
-                            )
-                            print(
-                                f"Severity: "
-                                f"{alert.get('severity')}"
-                            )
-                            print(
-                                f"Description: "
-                                f"{alert.get('description')}"
-                            )
-
-                            if alert.get("rule"):
-                                print(
-                                    f"Rule: "
-                                    f"{alert['rule']}"
-                                )
-
-                            if alert.get("related_rules"):
-                                related_rules = ", ".join(
-                                    alert["related_rules"]
-                                )
-
-                                print(
-                                    f"Related Rules: "
-                                    f"{related_rules}"
-                                )
-
-                            if alert.get(
-                                "event_count"
-                            ) is not None:
-                                print(
-                                    f"Event Count: "
-                                    f"{alert['event_count']}"
-                                )
-
-                            log_event(alert)
+                    log_event(correlation_alert)
 
                 print()
 
